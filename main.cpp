@@ -60,6 +60,7 @@ CComPtr<IUIAutomation> g_pUIAutomation;
 // Function prototypes
 BOOL CALLBACK DlgMain(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void GetPaltalkWindows(void);
+HWND SelectPaltalkWindowByClick(void);
 BOOL CALLBACK EnumPaltalkWindows(HWND hWnd, LPARAM lParam);
 void RestoreAndBringToFront(HWND hWnd);
 BOOL InitClockDis(void);
@@ -254,38 +255,41 @@ BOOL CALLBACK DlgMain(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 /// Initialise Paltalk Control Handles
 void GetPaltalkWindows(void)
 {
-	char szWinText[200] = { '0' };
-	//wchar_t wcTitle[256] = { '0' };
+	wchar_t wcStatusText[MAX_PATH] = { 0 };
 
 	// Paltalk chat room window
 	ghPtRoom = NULL; ghPtLv = NULL;
 
-	// Getting the chat room window handle
-	ghPtRoom = FindWindowW(L"DlgGroupChat Window Class", 0); // this is to find nick list
-	if (GetWindowTextW(ghPtRoom, gwcRoomTitle, 254) < 1)
-	{
-		msga("No Paltalk Room Found!");
-		return;
-	}
-	// Getting the main Paltalk window handle
-	ghPtMain = FindWindowW(L"Qt6103QWindowOwnDCIcon", gwcRoomTitle);  // this is to send text 
+	// Let the user choose the Paltalk window instead of depending on a version-specific class name.
+	ghPtMain = SelectPaltalkWindowByClick();
 	if (ghPtMain == NULL)
 	{
-		msga("No Paltalk Main Window Found!");
+		SendDlgItemMessageW(ghMain, IDC_STATIC_TITLE, WM_SETTEXT, (WPARAM)0, (LPARAM)L"Timing: ");
 		return;
 	}
+
+	// The selected top-level window is now the anchor for both text sending and child-control discovery.
+	ghPtRoom = ghPtMain;
+	if (GetWindowTextW(ghPtMain, gwcRoomTitle, 254) < 1)
+	{
+		wcscpy_s(gwcRoomTitle, MAX_PATH, L"Selected Paltalk Window");
+	}
+	if (emojiTextEditElement) emojiTextEditElement.Release();
+	if (automationElementRoom) automationElementRoom.Release();
+	if (g_pUIAutomation) g_pUIAutomation.Release();
+
 	// Initialise UIAutomation
 	if (FAILED(InitUIAutomation())) {
 		msga("Initializing UI Automation failed!");
 		return;
-	 }
+	}
 	// Getting the Emoji Text Edit control UIAutomation element to send text to Paltalk
 	HRESULT hr = GetUIAutomationElementFromHWNDAndClassName(ghPtMain, L"ui::controls::EmojiTextEdit", &emojiTextEditElement);
-	if (FAILED(hr)) {
+	if (FAILED(hr) || emojiTextEditElement == nullptr) {
 #ifdef DEBUG
 		OutputDebugStringA("GetUIAutomationElementFromHWNDAndClassName failed");
 #endif // DEBUG
-
+		msga("Paltalk window selected, but the chat input control was not found.");
 	}
 	// Get the Chat Room windows handle
 	if (ghPtRoom) 
@@ -304,10 +308,9 @@ void GetPaltalkWindows(void)
 		// Make the Paltalk Room window the HWND_TOPMOST 
 		SetWindowPos(ghPtMain, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 
-		GetWindowTextA(ghPtRoom, szWinText, 200);
 		// Set the title text to indicate which room we are timing
-		wprintf_s(gwcRoomTitle, MAX_PATH, L"Timing: %s", szWinText);
-		SendDlgItemMessageW(ghMain, IDC_STATIC_TITLE, WM_SETTEXT, (WPARAM)0, (LPARAM)gwcRoomTitle);
+		swprintf_s(wcStatusText, MAX_PATH, L"Timing: %ls", gwcRoomTitle);
+		SendDlgItemMessageW(ghMain, IDC_STATIC_TITLE, WM_SETTEXT, (WPARAM)0, (LPARAM)wcStatusText);
 		// Finding the chat room window controls handles
 		EnumChildWindows(ghPtRoom, EnumPaltalkWindows, 0);
 		// Load Nick Limits from file
@@ -317,12 +320,72 @@ void GetPaltalkWindows(void)
 			MessageBoxA(NULL, "Could not open limits.txt", "Error", MB_ICONERROR);
 			return;
 		}
+		if (!ghPtLv)
+		{
+			msga("Paltalk window selected, but the mic/nick list control was not found.");
+		}
 	}
 	else
 	{
 		msga("No Paltalk Window Found!");
 	}
 
+}
+
+/// Wait for the user to click the Paltalk window to monitor
+HWND SelectPaltalkWindowByClick(void)
+{
+	POINT pt = { 0 };
+	HWND hWnd = NULL;
+	HWND hRoot = NULL;
+	MSG msg = { 0 };
+
+	SendDlgItemMessageW(ghMain, IDC_STATIC_TITLE, WM_SETTEXT, (WPARAM)0, (LPARAM)L"Click the Paltalk room window...");
+
+	while (GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+	{
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		Sleep(25);
+	}
+
+	for (;;)
+	{
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+
+		if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)
+		{
+			return NULL;
+		}
+
+		if (GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+		{
+			GetCursorPos(&pt);
+			hWnd = WindowFromPoint(pt);
+			hRoot = GetAncestor(hWnd, GA_ROOT);
+
+			while (GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+			{
+				Sleep(25);
+			}
+
+			if (hRoot && hRoot != ghMain && IsWindowVisible(hRoot))
+			{
+				return hRoot;
+			}
+
+			SendDlgItemMessageW(ghMain, IDC_STATIC_TITLE, WM_SETTEXT, (WPARAM)0, (LPARAM)L"Click a window outside this timer...");
+		}
+
+		Sleep(25);
+	}
 }
 
 /// Enumeration Callback to Find the Control Windows
@@ -758,6 +821,11 @@ void StartStopMonitoring(void)
 		msga("Error: No Paltalk Room!\n [Get Pt] first!");
 		return;
 	}
+	if (!ghPtLv)
+	{
+		msga("Error: No Paltalk mic/nick list found!\nSelect the room window with [Get Pt] first.");
+		return;
+	}
 	if (!gbMonitor)
 	{
 		SetTimer(ghMain, IDT_MONITORTIMER, 1000, NULL);
@@ -784,6 +852,7 @@ void CopyPaste2Paltalk(char* szMsg)
 
 	if (strlen(gszCurrentNick) < 2) return;
 	else if (!gbSendTxt) return; // if text sending is disabled
+	else if (emojiTextEditElement == nullptr) return;
 
 	CComPtr<IUIAutomationLegacyIAccessiblePattern> pattern;
 	hr = emojiTextEditElement->GetCurrentPatternAs(UIA_LegacyIAccessiblePatternId, IID_IUIAutomationLegacyIAccessiblePattern, (void**)&pattern);
@@ -899,6 +968,9 @@ HRESULT __stdcall GetUIAutomationElementFromHWNDAndClassName(HWND hwnd, const wc
 #endif // DEBUG
 
 		return hr;
+	}
+	if (*foundElement == nullptr) {
+		return E_FAIL;
 	}
 
 	return S_OK;
