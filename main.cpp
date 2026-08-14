@@ -60,6 +60,7 @@ CComPtr<IUIAutomation> g_pUIAutomation;
 // Function prototypes
 BOOL CALLBACK DlgMain(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void GetPaltalkWindows(void);
+HWND FindPaltalkQtWindowByTitle(const wchar_t* title);
 BOOL CALLBACK EnumPaltalkWindows(HWND hWnd, LPARAM lParam);
 void RestoreAndBringToFront(HWND hWnd);
 BOOL InitClockDis(void);
@@ -268,7 +269,7 @@ void GetPaltalkWindows(void)
 		return;
 	}
 	// Getting the main Paltalk window handle
-	ghPtMain = FindWindowW(L"Qt6111QWindowOwnDCIcon", gwcRoomTitle);  // this is to send text 
+	ghPtMain = FindPaltalkQtWindowByTitle(gwcRoomTitle);  // this is to send text
 	if (ghPtMain == NULL)
 	{
 		msga("No Paltalk Main Window Found!");
@@ -323,6 +324,41 @@ void GetPaltalkWindows(void)
 		msga("No Paltalk Window Found!");
 	}
 
+}
+
+struct PaltalkQtWindowSearch
+{
+	const wchar_t* title;
+	HWND hwnd;
+};
+
+/// Find Paltalk's Qt main window without depending on the exact Qt version in the class name
+HWND FindPaltalkQtWindowByTitle(const wchar_t* title)
+{
+	PaltalkQtWindowSearch search = { title, NULL };
+	EnumWindows([](HWND hWnd, LPARAM lParam) -> BOOL
+	{
+		PaltalkQtWindowSearch* search = reinterpret_cast<PaltalkQtWindowSearch*>(lParam);
+		wchar_t wcClassName[MAX_PATH] = { 0 };
+		wchar_t wcWindowTitle[MAX_PATH] = { 0 };
+
+		if (!IsWindowVisible(hWnd)) return TRUE;
+		if (GetWindowTextW(hWnd, wcWindowTitle, MAX_PATH) < 1) return TRUE;
+		if (wcscmp(wcWindowTitle, search->title) != 0) return TRUE;
+		if (GetClassNameW(hWnd, wcClassName, MAX_PATH) < 1) return TRUE;
+
+		if (wcsncmp(wcClassName, L"Qt", 2) == 0 &&
+			wcsstr(wcClassName, L"QWindow") != nullptr &&
+			wcsstr(wcClassName, L"OwnDCIcon") != nullptr)
+		{
+			search->hwnd = hWnd;
+			return FALSE;
+		}
+
+		return TRUE;
+	}, reinterpret_cast<LPARAM>(&search));
+
+	return search.hwnd;
 }
 
 /// Enumeration Callback to Find the Control Windows
