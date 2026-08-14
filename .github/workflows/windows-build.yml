@@ -27,10 +27,14 @@ jobs:
       - name: Build Release x64
         run: msbuild Qt6PaltalkTimerX64.sln /p:Configuration=Release /p:Platform=x64
 
+      - name: Build Paltalk Probe
+        run: msbuild PaltalkProbe/PaltalkProbe.vcxproj /p:Configuration=Release /p:Platform=x64
+
       - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
-          name: Qt6PaltalkTimerX64-Release-x64
+          name: PaltalkTools-Release-x64
           path: |
             x64/Release/*.exe
             x64/Release/*.dll
+            PaltalkProbe/x64/Release/*.exe
